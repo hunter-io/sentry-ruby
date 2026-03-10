@@ -382,7 +382,6 @@ RSpec.describe Sentry::SolidQueue::ActiveJobExtensions do
         expect(result["_sentry"]).to be_a(Hash)
         expect(result["_sentry"]["trace_propagation_headers"]).to be_a(Hash)
       end
-
     end
 
     context "with trace propagation disabled" do

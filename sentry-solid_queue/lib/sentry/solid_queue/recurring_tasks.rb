@@ -18,8 +18,18 @@ module Sentry
           task = event.payload[:task]
           next unless task
 
+          # In solid_queue >= 1.3, the payload :task is the string key, not the RecurringTask object
+          task = resolve_task(task) if task.is_a?(String)
+          next unless task
+
           patch_task(task)
         end
+      end
+
+      def self.resolve_task(key)
+        ::SolidQueue::RecurringTask.find_by(key: key)
+      rescue ActiveRecord::ActiveRecordError
+        nil
       end
 
       def self.patch_task(task)

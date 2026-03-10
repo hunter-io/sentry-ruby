@@ -7,6 +7,25 @@ module SolidQueue
   class RecurringTask
     attr_reader :class_name, :schedule, :key
 
+    # Registry for find_by lookups in tests
+    @registry = {}
+
+    class << self
+      attr_reader :registry
+
+      def find_by(key:)
+        @registry[key]
+      end
+
+      def register(task)
+        @registry[task.key] = task
+      end
+
+      def clear_registry!
+        @registry.clear
+      end
+    end
+
     def initialize(class_name:, schedule:, key:)
       @class_name = class_name
       @schedule = schedule
@@ -46,6 +65,7 @@ RSpec.describe Sentry::SolidQueue::RecurringTasks do
   before do
     perform_basic_setup { |config| config.traces_sample_rate = 1.0 }
     described_class.reset!
+    ::SolidQueue::RecurringTask.clear_registry!
   end
 
   describe ".patch_task" do
@@ -180,6 +200,25 @@ RSpec.describe Sentry::SolidQueue::RecurringTasks do
     end
   end
 
+  describe ".resolve_task" do
+    it "looks up a RecurringTask by key" do
+      task = ::SolidQueue::RecurringTask.new(
+        class_name: "RecurringTestJob",
+        schedule: "*/5 * * * *",
+        key: "my_task"
+      )
+      ::SolidQueue::RecurringTask.register(task)
+
+      resolved = described_class.resolve_task("my_task")
+      expect(resolved).to eq(task)
+    end
+
+    it "returns nil for unknown keys" do
+      resolved = described_class.resolve_task("nonexistent_key")
+      expect(resolved).to be_nil
+    end
+  end
+
   describe ".setup" do
     it "subscribes to enqueue_recurring_task.solid_queue and calls patch_task" do
       described_class.setup
@@ -193,6 +232,29 @@ RSpec.describe Sentry::SolidQueue::RecurringTasks do
       ActiveSupport::Notifications.instrument("enqueue_recurring_task.solid_queue", task: task)
 
       expect(described_class.instance_variable_get(:@patched_classes)).to include("RecurringTestJob")
+    end
+
+    it "resolves string task keys to RecurringTask objects (solid_queue >= 1.3)" do
+      described_class.setup
+
+      task = ::SolidQueue::RecurringTask.new(
+        class_name: "RecurringTestJob",
+        schedule: "*/5 * * * *",
+        key: "string_key_task"
+      )
+      ::SolidQueue::RecurringTask.register(task)
+
+      ActiveSupport::Notifications.instrument("enqueue_recurring_task.solid_queue", task: "string_key_task")
+
+      expect(described_class.instance_variable_get(:@patched_classes)).to include("RecurringTestJob")
+    end
+
+    it "skips string task keys that cannot be resolved" do
+      described_class.setup
+
+      expect {
+        ActiveSupport::Notifications.instrument("enqueue_recurring_task.solid_queue", task: "unknown_key")
+      }.not_to raise_error
     end
 
     it "skips events with no task payload" do
