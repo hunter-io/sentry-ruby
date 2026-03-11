@@ -34,6 +34,7 @@ module Sentry
 
       def self.patch_task(task)
         klass_name = task.class_name
+        return unless klass_name
 
         @mutex.synchronize do
           return if @patched_classes.include?(klass_name)
