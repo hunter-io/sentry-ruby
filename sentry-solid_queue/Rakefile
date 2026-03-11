@@ -7,7 +7,7 @@ Sentry::Test::RakeTasks.define_spec_tasks(
   spec_pattern: "spec/sentry/**/*_spec.rb",
   spec_rspec_opts: "--order rand --format progress",
   isolated_specs_pattern: "spec/isolated/**/*_spec.rb",
-  isolated_rspec_opts: "--format progress"
+  isolated_rspec_opts: '--format progress --exclude-pattern ""'
 )
 
 task default: [:spec, :"spec:isolated"]
