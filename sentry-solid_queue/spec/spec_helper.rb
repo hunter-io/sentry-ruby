@@ -130,6 +130,39 @@ class NonSolidQueueJob < ActiveJob::Base
   end
 end
 
+# Raising jobs that count their own executions. Both take the `perform_now`
+# guard's early-return path — CountingSadJob when Sentry is uninitialized,
+# CountingNonSolidQueueSadJob because its adapter isn't solid_queue — which is
+# where a method-level rescue used to swallow the error and perform the job a
+# second time on the same instance.
+class CountingSadJob < ActiveJob::Base
+  self.queue_adapter = :solid_queue
+
+  class << self
+    attr_accessor :runs
+  end
+  self.runs = 0
+
+  def perform
+    self.class.runs += 1
+    raise "counted failure"
+  end
+end
+
+class CountingNonSolidQueueSadJob < ActiveJob::Base
+  self.queue_adapter = :async
+
+  class << self
+    attr_accessor :runs
+  end
+  self.runs = 0
+
+  def perform
+    self.class.runs += 1
+    raise "counted failure"
+  end
+end
+
 class RetryableJob < ActiveJob::Base
   self.queue_adapter = :solid_queue
   retry_on RuntimeError, wait: 0, attempts: 3

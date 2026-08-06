@@ -14,28 +14,36 @@ module Sentry
 
         job_executed = false
 
-        # Worker threads (deserialized from queue): clone hub for thread isolation,
-        # then operate directly on the scope (like Sidekiq's server middleware).
-        # No with_scope — avoids double Scope#dup overhead.
-        #
-        # Inline perform_now (e.g., from a controller): use with_scope to
-        # preserve the existing request scope/transaction.
-        if @_solid_queue_worker_thread
-          Sentry.clone_hub_to_current_thread
-          scope = Sentry.get_current_scope
-          perform_with_sentry(scope) { job_executed = true; super }
-        else
-          Sentry.with_scope do |scope|
+        # NOTE: the rescue below MUST stay scoped to this begin block. As a
+        # method-level `rescue` it also covered the guard clause above, where
+        # `job_executed` is still nil — so an exception raised by the guard's
+        # own `super` was swallowed and the job was performed a second time on
+        # the same instance (executions == 2, duplicated side effects, and the
+        # *second* run's error propagating in place of the real one).
+        begin
+          # Worker threads (deserialized from queue): clone hub for thread isolation,
+          # then operate directly on the scope (like Sidekiq's server middleware).
+          # No with_scope — avoids double Scope#dup overhead.
+          #
+          # Inline perform_now (e.g., from a controller): use with_scope to
+          # preserve the existing request scope/transaction.
+          if @_solid_queue_worker_thread
+            Sentry.clone_hub_to_current_thread
+            scope = Sentry.get_current_scope
             perform_with_sentry(scope) { job_executed = true; super }
+          else
+            Sentry.with_scope do |scope|
+              perform_with_sentry(scope) { job_executed = true; super }
+            end
           end
+        rescue => e
+          # If the job already executed, the exception is a re-raised job error —
+          # let it propagate. If not, Sentry setup failed before the job ran,
+          # so fall back to running the job without instrumentation.
+          raise if job_executed
+          Sentry.sdk_logger.error("sentry-solid_queue failed to instrument job: #{e.message}") rescue nil
+          super
         end
-      rescue => e
-        # If the job already executed, the exception is a re-raised job error —
-        # let it propagate. If not, Sentry setup failed before the job ran,
-        # so fall back to running the job without instrumentation.
-        raise if job_executed
-        Sentry.sdk_logger.error("sentry-solid_queue failed to instrument job: #{e.message}") rescue nil
-        super
       end
 
       # --- Client-side: inject trace headers on enqueue ---

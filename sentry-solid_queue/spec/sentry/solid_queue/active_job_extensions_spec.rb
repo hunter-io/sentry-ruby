@@ -11,6 +11,16 @@ RSpec.describe Sentry::SolidQueue::ActiveJobExtensions do
         result = HappyJob.perform_now
         expect(result).to eq("happy")
       end
+
+      it "performs a raising job exactly once and propagates its own error" do
+        CountingSadJob.runs = 0
+        job = CountingSadJob.new
+
+        expect { job.perform_now }.to raise_error(RuntimeError, "counted failure")
+
+        expect(CountingSadJob.runs).to eq(1)
+        expect(job.executions).to eq(1)
+      end
     end
 
     context "when Sentry is initialized without tracing" do
@@ -41,6 +51,17 @@ RSpec.describe Sentry::SolidQueue::ActiveJobExtensions do
       it "does not interfere with non-SolidQueue adapter jobs" do
         result = NonSolidQueueJob.perform_now
         expect(result).to eq("not solid_queue")
+        expect(transport.events.count).to eq(0)
+      end
+
+      it "performs a raising non-SolidQueue job exactly once and propagates its own error" do
+        CountingNonSolidQueueSadJob.runs = 0
+        job = CountingNonSolidQueueSadJob.new
+
+        expect { job.perform_now }.to raise_error(RuntimeError, "counted failure")
+
+        expect(CountingNonSolidQueueSadJob.runs).to eq(1)
+        expect(job.executions).to eq(1)
         expect(transport.events.count).to eq(0)
       end
 
