@@ -34,6 +34,20 @@ RSpec.describe Sentry::SolidQueue::ActiveJobExtensions do
         expect(event.exception.values.first.type).to eq("RuntimeError")
       end
 
+      # The fully instrumented path: guard passes, so the job runs inside
+      # perform_with_sentry. A raising job must still be performed once, and be
+      # reported once — a duplicate run would also double the Sentry event.
+      it "performs a raising instrumented job exactly once and reports it once" do
+        CountingSadJob.runs = 0
+        job = CountingSadJob.new
+
+        expect { job.perform_now }.to raise_error(RuntimeError, "counted failure")
+
+        expect(CountingSadJob.runs).to eq(1)
+        expect(job.executions).to eq(1)
+        expect(transport.events.count).to eq(1)
+      end
+
       it "does not capture events for successful jobs" do
         HappyJob.perform_now
 
@@ -221,28 +235,42 @@ RSpec.describe Sentry::SolidQueue::ActiveJobExtensions do
 
       it "falls back to uninstrumented execution if Sentry errors before the job runs" do
         allow(Sentry).to receive(:clone_hub_to_current_thread).and_raise(StandardError, "sentry boom")
+        CountingHappyJob.runs = 0
 
-        job = HappyJob.new
+        job = CountingHappyJob.new
         job_data = job.serialize
         job_data["_sentry"] = {}
         job.deserialize(job_data)
 
         # Should not raise — falls back to super
         result = job.perform_now
+
         expect(result).to eq("happy")
+        # The fallback runs the job; it must not *re-run* one that already ran.
+        expect(CountingHappyJob.runs).to eq(1)
+        expect(job.executions).to eq(1)
       end
 
       it "re-raises job errors even when safety rescue is active" do
-        # The outer rescue must not swallow actual job exceptions
-        expect { simulate_worker_perform(SadJob) }.to raise_error(RuntimeError, "I'm sad!")
+        # The outer rescue must not swallow actual job exceptions, and must not
+        # mistake a job error for an instrumentation failure and retry the job.
+        CountingSadJob.runs = 0
+
+        expect { simulate_worker_perform(CountingSadJob) }
+          .to raise_error(RuntimeError, "counted failure")
+
+        expect(CountingSadJob.runs).to eq(1)
       end
 
       it "falls back to uninstrumented execution on inline path if Sentry errors before the job runs" do
         allow(Sentry).to receive(:with_scope).and_raise(StandardError, "scope boom")
+        CountingHappyJob.runs = 0
 
         # Inline path (no deserialization) — should fall back to super
-        result = HappyJob.perform_now
+        result = CountingHappyJob.perform_now
+
         expect(result).to eq("happy")
+        expect(CountingHappyJob.runs).to eq(1)
       end
     end
 

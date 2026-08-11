@@ -130,11 +130,17 @@ class NonSolidQueueJob < ActiveJob::Base
   end
 end
 
-# Raising jobs that count their own executions. Both take the `perform_now`
-# guard's early-return path — CountingSadJob when Sentry is uninitialized,
-# CountingNonSolidQueueSadJob because its adapter isn't solid_queue — which is
-# where a method-level rescue used to swallow the error and perform the job a
-# second time on the same instance.
+# Jobs that count their own executions.
+#
+# `perform_now` is a wrapper, so the invariant that matters is *how many times*
+# it calls the wrapped job — not what the job returns. Asserting only on the
+# return value or the error class is blind to a duplicate run: an idempotent
+# job produces an identical outcome either way, which is how a method-level
+# rescue managed to perform every job twice without failing a single example.
+# Use these fixtures, and assert on `runs`, wherever a path could double up.
+#
+# CountingSadJob and CountingNonSolidQueueSadJob also cover the guard's two
+# early-return paths — Sentry uninitialized, and a non-solid_queue adapter.
 class CountingSadJob < ActiveJob::Base
   self.queue_adapter = :solid_queue
 
@@ -160,6 +166,21 @@ class CountingNonSolidQueueSadJob < ActiveJob::Base
   def perform
     self.class.runs += 1
     raise "counted failure"
+  end
+end
+
+# Succeeds, so only the counter can tell one run from two.
+class CountingHappyJob < ActiveJob::Base
+  self.queue_adapter = :solid_queue
+
+  class << self
+    attr_accessor :runs
+  end
+  self.runs = 0
+
+  def perform
+    self.class.runs += 1
+    "happy"
   end
 end
 
